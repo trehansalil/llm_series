@@ -1,3 +1,4 @@
 langchain
 openai
 ipykernel
+huggingface_hub
