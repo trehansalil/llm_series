@@ -4,3 +4,12 @@ ipykernel
 huggingface_hub
 python-dotenv
 streamlit
+langchain_community
+langserve
+bs4
+requests
+pypdf
+chromadb
+faiss-cpu
+pysqlite3
+tiktoken
