@@ -17,9 +17,9 @@ from langchain_core.runnables import Runnable, RunnableMap, RunnablePassthrough
 from langchain_core.utils.function_calling import (
     convert_to_openai_tool,
 )
-# from langchain_core.utils.pydantic import is_basemodel_subclass
+
 from langchain_core.pydantic_v1 import BaseModel
-from RAG.utils import log_response, log_error
+from src.chat_service.RAG.utils import log_response, log_error
 from src.chat_service.logging import logger
 from langchain.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
