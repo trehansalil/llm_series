@@ -670,11 +670,7 @@ class RouterLLM(BaseLLM):
     frequency_penalty: float = 0.5
     presence_penalty: float = 0.5
     response_format: Optional[Dict] = None
-    qualifier_dict: Optional[Dict] = None
-    complexity_dict: Optional[Dict] = None
-    diagram_dict: Optional[Dict] = None
-    policy_dict: Optional[Dict] = None
-    general_dict: Optional[Dict] = None
+    stock_news_dict: Optional[Dict] = None
     input_model_params: Optional[Dict] = None
     model_params: Optional[Dict] = {}
     client: Optional[Any] = None
