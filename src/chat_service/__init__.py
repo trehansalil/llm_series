@@ -1,8 +1,10 @@
+import json
 import os
 import random
 import sys
 import time
-from typing import List
+from typing import Dict, Generator, List, Optional
+import unicodedata
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
@@ -10,22 +12,18 @@ sys.path.append(project_root)
 import requests
 import re
 from src.chat_service.logging import logger
-from src.chat_service.RAG.utils import log_time_to_sentry
+from src.chat_service.RAG.utils import log_error, log_time_to_sentry
 from src.chat_service.RAG.utils.constants import (
     EMBEDDING_API_MODEL_URL, EMBEDDING_API_MODEL_KEY, OPENAI_COMPATIBLE_API_BASE, 
-    OPENAI_COMPATIBLE_API_KEY, OPENAI_COMPATIBLE_API_MODEL_NAME, EMBEDDING_API_MODEL_NAME, VERBOSE
+    OPENAI_COMPATIBLE_API_KEY, OPENAI_COMPATIBLE_API_MODEL_NAME, EMBEDDING_API_MODEL_NAME, VERBOSE, 
+    _default_system_message
 )
 
 
 class LLMManager:
 
-    system_message = """
-        You are a Stock Market/Economic market expert, named `Sal Bot`, working with the Salil, the best Data Scientist of the Century. 
-        Use positive language and avoid any criticism of the government or its policies.
-        Do not mention yourself or start responses with phrases like 'Based on the provided context'. 
-        Write answers directly as required, using phrases like 'According to my knowledge' when needed. 
-        Bold/Italicize key points and use proper titles (eg. #, ##, ###) and bullet points without overdoing it.
-    """
+    system_message: str = _default_system_message
+    lang_dict: Dict = {"ar": "Arabic", "en": "English"}
 
     def __init__(self) -> None:
         pass
@@ -53,33 +51,52 @@ class LLMManager:
     @staticmethod
     def inference_with_llm(
         prompt, 
-        openai_key=OPENAI_COMPATIBLE_API_KEY, 
-        openai_model=OPENAI_COMPATIBLE_API_MODEL_NAME, 
-        max_tokens=5000, 
-        temperature=0.2, 
         verbose=VERBOSE, 
         system_message="",
         **kwargs
     ):
         """Inference with inference_with_llm (OpenAI compatible API using /chat/completions endpoint deployed using Llama.cpp"""
 
+        language = kwargs.get("language", "en")
+        
         LLMManager.system_message = system_message or LLMManager.system_message
-
-        return LLMManager.call(prompt, max_tokens, temperature,
-                                        verbose, openai_key=openai_key,
-                                        openai_model=openai_model, **kwargs)
+        
+        LLMManager.system_message = LLMManager.system_message.format(LLMManager.lang_dict[language])
+        
+        return LLMManager.call(prompt, verbose, **kwargs)
 
 
     @staticmethod
-    def call(prompt, max_tokens=256, temperature=0.2, verbose=VERBOSE,
-             openai_key=OPENAI_COMPATIBLE_API_KEY, openai_model=OPENAI_COMPATIBLE_API_MODEL_NAME, **kwargs):
+    def call(prompt, verbose=VERBOSE, **kwargs):
         headers = {
-            'Authorization': f'Bearer {openai_key}',
+            'Authorization': f'Bearer {kwargs.get("openai_api_key", OPENAI_COMPATIBLE_API_KEY)}',
             'Content-Type': 'application/json'
         }
+        
+        logged_params = {
+            "max_tokens": kwargs.get("max_tokens", 5000),
+            "stream": kwargs.get("stream", False),
+            "temperature": kwargs.get("temperature", 0.2),
+            "top_p": kwargs.get("top_p", 1),
+            "user": kwargs.get("user", "string"),
+            "use_beam_search": kwargs.get("use_beam_search", False),
+            "presence_penalty": kwargs.get("presence_penalty", -1),
+            "repetition_penalty": kwargs.get("repetition_penalty", 1),
+            "length_penalty": kwargs.get("length_penalty", 1),
+            "ignore_eos": kwargs.get("ignore_eos", False),
+            "skip_special_tokens": kwargs.get("skip_special_tokens", True),
+            "spaces_between_special_tokens": kwargs.get("spaces_between_special_tokens", True),
+            "include_stop_str_in_output": kwargs.get("include_stop_str_in_output", False),
+            "response_format": kwargs.get("response_format", {"type": "text"}),
+            "openai_api_base": kwargs.get("openai_api_base", OPENAI_COMPATIBLE_API_BASE),
+            "openai_api_key": kwargs.get("openai_api_key", OPENAI_COMPATIBLE_API_KEY),
+            "model": kwargs.get("model", OPENAI_COMPATIBLE_API_MODEL_NAME),
+            }
+        print(f"\nLogged Param are as follows: {logged_params}\n")
                     
+                 
         payload = {
-            "model": openai_model,
+            "model": kwargs.get("model", OPENAI_COMPATIBLE_API_MODEL_NAME),
             "messages": [
                     {
                         "role": "system",
@@ -90,39 +107,46 @@ class LLMManager:
                         "content": prompt
                     }
             ],
-            "max_tokens": max_tokens,
+            "max_tokens": kwargs.get("max_tokens", 5000),
             "stream": kwargs.get("stream", False),
-            "temperature": temperature,
+            "temperature": kwargs.get("temperature", 0.2),
+            "top_p": kwargs.get("top_p", 1),
             "user": kwargs.get("user", "string"),
             "use_beam_search": kwargs.get("use_beam_search", False),
+            "presence_penalty": kwargs.get("presence_penalty", -1),
             "repetition_penalty": kwargs.get("repetition_penalty", 1),
             "length_penalty": kwargs.get("length_penalty", 1),
-            "early_stopping": kwargs.get("early_stopping", False),
             "ignore_eos": kwargs.get("ignore_eos", False),
             "skip_special_tokens": kwargs.get("skip_special_tokens", True),
             "spaces_between_special_tokens": kwargs.get("spaces_between_special_tokens", True),
             "include_stop_str_in_output": kwargs.get("include_stop_str_in_output", False),
-            "response_format": {
-                "type": "text"
-            }
+            "response_format": kwargs.get("response_format", {"type": "text"})
         }
+
         try:
             response = requests.post(
-                OPENAI_COMPATIBLE_API_BASE + "/v1/chat/completions",
+                kwargs.get("openai_api_base", OPENAI_COMPATIBLE_API_BASE) + "/chat/completions",
                 headers=headers, 
                 json=payload,
-                verify=False
+                verify=True,
+                stream=kwargs.get("stream", False)
             )
-            
+
             if response.status_code == 200:
-                result = response.json()
-                chat = result["choices"][0]["message"]['content']
-                
-                finish_reason = result["choices"][0]["finish_reason"]
-                if verbose:
-                    print(f"Response: {chat}")
-                    print(f"Finish reason: {finish_reason}")
-                return chat
+                if kwargs.get("stream", False):
+                    # Directly yield from process_stream
+                    for chunk in LLMManager.process_stream(response, verbose):
+                        yield chunk
+                else:
+                    result = response.json()
+                    chat = result["choices"][0]["message"]['content']
+                    finish_reason = result["choices"][0]["finish_reason"]
+
+                    if verbose:
+                        print(f"Response: {chat}")
+                        print(f"Finish reason: {finish_reason}")
+
+                    yield str(f"{chat}")
             elif response.status_code == 429:  # Too Many Requests
                 if verbose:
                     print(f"Rate limit exceeded. Waiting before retry...")
@@ -136,14 +160,62 @@ class LLMManager:
             print(f"Request failed: {e}. Retrying...")
             time.sleep(2 ** random.choice([3, 4, 5]))  # Exponential backoff     
 
-    @log_time_to_sentry(step_name='LLMInferenceManager: generate_embedding')
+
     @staticmethod
-    def generate_embedding(text, verbose: int) -> List:
+    def process_stream(response, verbose: bool) -> Generator[str, None, None]:
+        """
+        Process a streaming response from the API.
+        
+        Args:
+            response: The streaming response object
+            verbose: Whether to print debug information
+            
+        Yields:
+            Chunks of generated text as they arrive
+        """
+        try:
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                    
+                if line.startswith(b"data: "):
+                    json_str = line[6:].decode('utf-8')
+                    
+                    if json_str == "[DONE]":
+                        break
+                        
+                    try:
+                        json_data = json.loads(json_str)
+                        if "choices" in json_data:
+                            choice = json_data["choices"][0]
+                            
+                            if "delta" in choice and "content" in choice["delta"]:
+                                content = choice["delta"]["content"]
+                                if verbose:
+                                    print(content, end='', flush=True)
+                                yield content
+                            
+                            if verbose and "finish_reason" in choice and choice["finish_reason"]:
+                                print(f"\nFinish reason: {choice['finish_reason']}")
+                                
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Failed to decode JSON from stream: {str(e)}")
+                        continue
+                        
+        except Exception as e:
+            logger.error(f"Error processing stream: {str(e)}")
+            yield f"Error in stream: {str(e)}"
+
+
+    @log_time_to_sentry(step_name='LLMManager: generate_embedding')
+    @staticmethod
+    def generate_embedding(text, verbose: int, retries:Optional[int]=5) -> List:
         input_text = f'{text}'
         input_text = input_text.replace("\n", "<br/>")
         input_text = input_text.replace("§", "")
+        input_text = input_text.replace('"', "\"")
         input_text = input_text.replace("\\", " ")
-        input_text = input_text.replace("\t", "------") 
+        input_text = input_text.replace("\t", "------")
         input_text = LLMManager.clean_text(input_text)
 
         if len(input_text) <= 15: # Embedding crashes if the length of text is smaller
@@ -158,19 +230,39 @@ class LLMManager:
             "Content-Type": "application/json",
             "Authorization": "Bearer " + EMBEDDING_API_MODEL_KEY
         }
+        attempt = 0
+        backoff_factor = 1  # Starting backoff factor for exponential increase
+        
+        while attempt < retries:
+            try:
+                response = requests.post(EMBEDDING_API_MODEL_URL, json=payload, headers=headers, verify=True)
+                
+                if verbose:
+                    print(f"Embedding Input: \n{input_text}\n")
+                
+                if response.status_code == 200:
+                    embeddings = response.json()["data"][0]["embedding"]
+                    
+                    if verbose:
+                        print(f"\nEmbedding Model Response: \n{embeddings}\n")
 
-        # print("Headers", headers)
+                    return embeddings
+                else:
+                    raise Exception(f"Failed with status code {response.status_code} and message: {response.text}")
 
-        response = requests.post(EMBEDDING_API_MODEL_URL + "/embedding", json=payload, headers=headers, verify=False)
-        if verbose:
-            print(f"Embedding Input: \n{input_text}\n")
-        if response.status_code == 200:
-            embeddings = response.json()["data"][0]["embedding"]
-            if verbose:
-                print(f"\nEmbedding Model Response: \n{embeddings}\n")            
-        else:
-            print(f"Error: {response.status_code} - {response.text}")
-            logger.error(f"Error LLM Inference: {response.status_code} - {response.text}")
-            embeddings = []
-            
-        return embeddings
+            except Exception as e:
+                logger.error(f"Error Embedding model: {response.status_code} - {response.text}")
+                
+                attempt += 1
+                if attempt < retries:
+                    wait_time = backoff_factor * (2 ** attempt)  # Exponential backoff (2^attempt)
+                    logger.info(f"Retrying in {wait_time} seconds... (Attempt {attempt}/{retries})")
+                    time.sleep(wait_time)
+                else:
+                    logger.error("Max retries reached. Aborting.")
+                    
+                    # Raise an error after retries are exhausted
+                    error_message = f"Max retries reached. Failed to get embeddings after {retries} attempts."
+                    log_error(e=e, step_name="Embedding Generation", message=error_message)
+                    logger.error(error_message)
+                    raise Exception(error_message)
