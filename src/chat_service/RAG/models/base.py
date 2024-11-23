@@ -47,7 +47,7 @@ from langchain.llms.base import BaseLLM
 from langchain.schema import LLMResult, Generation
 from src.chat_service import LLMManager
 from src.chat_service.RAG.models.embedding import CustomEmbeddings
-from src.chat_service.RAG.utils.constants import VERBOSE
+from src.chat_service.RAG.utils.constants import OPENAI_COMPATIBLE_API_BASE, OPENAI_COMPATIBLE_API_KEY, OPENAI_COMPATIBLE_API_MODEL_NAME, VERBOSE
 from pydantic import Field
 
 from langchain_core.language_models import LanguageModelInput
@@ -75,18 +75,35 @@ def _is_pydantic_class(obj: Any) -> bool:
     return isinstance(obj, type) and is_basemodel_subclass(obj)  
 
 
-class CustomOpenAI(BaseLLM):
-    retrievals: Optional[List[Any]] = Field(default=[])
-    system_message: Optional[str] = Field(default='')
+class OpenAICompatibleLLM(BaseLLM):
+    max_tokens: int = 200
+    temperature: float = 0.2
+    language: Optional[str] = "en"
+    length_penalty: Optional[float] = 0.6
+    top_p: Optional[float] = 1.0
+    output_max_tokens: Optional[float] = 5000
+    openai_api_base: str = OPENAI_COMPATIBLE_API_BASE
+    openai_api_key: str = OPENAI_COMPATIBLE_API_KEY
+    model: str = OPENAI_COMPATIBLE_API_MODEL_NAME
+    retrievals: Optional[List[Any]] = []
+    system_message: Optional[str] = ''
+    response_format: Optional[str] = {"type": "text"}
+    stream_: Optional[bool] = False
     
     def __init__(self, retrievals: Optional[List[Any]] = [], system_message: Optional[str] = '', **kwargs):
         super().__init__(**kwargs)
         self.retrievals = retrievals
-        self.system_message=system_message
+        self.system_message=system_message or LLMManager.system_message
+        self.openai_api_base = kwargs.get("openai_api_base", OPENAI_COMPATIBLE_API_BASE)
+        self.openai_api_key = kwargs.get("openai_api_key", OPENAI_COMPATIBLE_API_KEY)
+        self.model = kwargs.get("model", OPENAI_COMPATIBLE_API_MODEL_NAME)
+        self.language = kwargs.get("language", "en")
+        self.max_tokens = kwargs.get("max_tokens", None)
+        self.output_max_tokens = kwargs.get("output_max_tokens", None)
+        self.response_format = kwargs.get("response_format", {"type": "text"})
     
-    def __call__(self, query: List[str], stop):
-        
-        return self._generate(prompts=[query])         
+    def __call__(self, query: List[str], stop=None):
+        return self._generate(prompts=[query], stop=stop)         
     
     def _check_for_mandatory_inputs(
         self, inputs: dict[str, Any], mandatory_params: List[str]
@@ -566,27 +583,42 @@ class CustomOpenAI(BaseLLM):
             token_count = CustomEmbeddings.count_tokens(prompt)
             system_token_count = CustomEmbeddings.count_system_tokens()
             if VERBOSE:
-                logger.warning(f"System Message Token Count: {system_token_count}")
-            max_token = 3500
+                logger.info(f"System Message Token Count: {system_token_count}")
+            max_token = self.max_tokens
             if token_count + system_token_count > 4000:
                 # Added the contribution coming from token count of the system message and prompt text to calculate the total token count
-                max_token = 8000 - token_count - system_token_count - 1000 # Adding some additional Offset here to avoid running into errors
-                
+                max_token = self.output_max_tokens - token_count - system_token_count - 1000 # Adding some additional Offset here to avoid running into errors
+            
             try:
+                logger.info(f"Inferencing using {self.__class__.__name__} within {inspect.currentframe().f_code.co_name}\n")
                 response = LLMManager().inference_with_llm(
                     prompt, 
-                    temperature=kwargs.get('temperature', 0.5),
+                    temperature=kwargs.get('temperature', self.temperature),
+                    top_p=kwargs.get('top_p', self.top_p),
                     max_tokens=kwargs.get('max_tokens', max_token),
-                    system_message=self.system_message
+                    length_penalty=kwargs.get('length_penalty', self.length_penalty),
+                    openai_api_base=self.openai_api_base,
+                    openai_api_key=self.openai_api_key,
+                    model=self.model,
+                    response_format = {"type": "text"} if self.response_format == "text" else self.response_format,
+                    system_message=self.system_message,
+                    language=self.language or "en",
+                    stream=self.stream_
                 )
+                
             except Exception as e:
                 logger.error(f"Error generating response: {e}")
-                logger.warning(f"token count= {token_count}\nsystem token count = {system_token_count}")
-                log_error(e=e, step_name=f"Error logged at {self.__class__.__name__} within {inspect.currentframe().f_code.co_name}")
+                logger.info(f"token count= {token_count}\nsystem token count = {system_token_count}")
+                log_error(e=e, step_name=f"Error logged at `{self.__class__.__name__}` within {inspect.currentframe().f_code.co_name}")
 
-            generation = Generation(text=response)
-            generations.append(generation)
-            
+            if self.stream_:
+                generation = Generation(text="".join(response))
+                generations.append(generation)
+            else:
+                val = ''.join(response)
+                generation = Generation(text=val)
+                generations.append(generation)
+
         return LLMResult(generations=[generations])
 
     @property
@@ -595,5 +627,5 @@ class CustomOpenAI(BaseLLM):
 
     @property
     def _llm_type(self):
-        return "custom-openai"    
-     
+        return "custom"    
+ 
