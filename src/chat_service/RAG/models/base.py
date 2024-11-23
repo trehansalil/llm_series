@@ -766,7 +766,7 @@ class RouterLLM(BaseLLM):
                     if attribute in self.attributes:
                         self.attributes.remove(attribute)
 
-            response.user_message = prompt
+            response.news_text = prompt
             
             # Process response choices based on attributes and associated dictionaries
             for attribute in self.attributes:
