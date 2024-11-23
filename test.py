@@ -1,9 +1,9 @@
-from src.chat_service.RAG.models.base import CustomOpenAI
-from src.chat_service.RAG.utils.constants import OPENAI_COMPATIBLE_API_MODEL_NAME, OPENAI_COMPATIBLE_API_BASE, OPENAI_COMPATIBLE_API_KEY
+from src.chat_service.RAG.models.base import OpenAICompatibleLLM
+from src.chat_service.RAG.utils.constants import OPENAI_COMPATIBLE_API_MODEL_NAME
 
 print(OPENAI_COMPATIBLE_API_MODEL_NAME)
 
-llm = CustomOpenAI(
+llm = OpenAICompatibleLLM(
     max_tokens=1000,
 )
 
